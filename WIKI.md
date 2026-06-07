@@ -2,12 +2,20 @@
 
 ## Overview
 
-**Open Siri** is an Android APK that bootstraps a full AI agent (Hermes Agent) directly on-phone. Think of it as an open-source, self-hosted alternative to Apple's 2026 Siri — but for Android, with cron scheduling, local file access, and a Material 3 GUI.
+**Open Siri** — an Android APK that puts a full AI agent (Hermes Agent) directly on-phone. Open-source, self-hosted alternative to Apple's 2026 Siri, with cron scheduling, local file access, and Material 3 GUI.
+
+Two editions:
+
+| Edition | Size | Description |
+|---------|------|-------------|
+| **Open Siri** (Complete) | 225 MB | Full Termux + Hermes Agent embedded, zero-download install |
+| **Open Siri Bootstrapper** | 8.4 MB | Lightweight; downloads dependencies on first launch |
 
 - **Package:** com.opensiri.agent.bootstrap
-- **Version:** 0.2.0
 - **Platform:** Android 8+ (API 26), Kotlin + Jetpack Compose
 - **Agent Engine:** Hermes Agent (nousresearch/hermes-agent)
+- **Source:** ~/onezion-agent/
+- **APKs:** ~/Downloads/OpenSiri-Complete-v1.apk (~/Downloads/OpenSiri-v0.2.0.apk)
 
 ## Architecture
 
