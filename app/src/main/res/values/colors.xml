@@ -1,0 +1,9 @@
+<resources>
+    <color name="background">#FF1A1721</color>
+    <color name="surface">#FF252232</color>
+    <color name="primary">#FF6750A4</color>
+    <color name="onPrimary">#FFFFFFFF</color>
+    <color name="onSurface">#FFE8DEF8</color>
+    <color name="onSurfaceVariant">#80FFFFFF</color>
+    <color name="outline">#1AFFFFFF</color>
+</resources>
