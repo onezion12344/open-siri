@@ -184,7 +184,7 @@ if command -v hermes >/dev/null 2>&1; then
     hermes --version >> "$LOG" 2>&1 || log "⚠ version check failed (may be ok)"
 else
     log "✗ hermes not in PATH"
-    log "Try: export PATH=\$PATH:$PREFIX/bin"
+    log "Try: export PATH=\$PATH:${PREFIX}/bin"
     exit 1
 fi
 step "5.1" "Verification complete"
