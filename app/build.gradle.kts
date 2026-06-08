@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
+    id("com.google.dagger.hilt.android")
 }
 
 android {
@@ -79,6 +81,14 @@ android {
     }
 }
 
+// Force javapoet 1.13.0 — Hilt 2.56's AggregateDepsTask worker needs ClassName.canonicalName()
+// which is absent in 1.10.0 (still pulled in transitively by older plugins in cache).
+configurations.all {
+    resolutionStrategy {
+        force("com.squareup:javapoet:1.13.0")
+    }
+}
+
 dependencies {
     // Core
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
@@ -103,4 +113,8 @@ dependencies {
 
     // Testing (pure-JVM, no Robolectric)
     testImplementation("junit:junit:4.13.2")
+
+    // Hilt DI
+    implementation("com.google.dagger:hilt-android:2.56")
+    ksp("com.google.dagger:hilt-compiler:2.56")
 }
