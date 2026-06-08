@@ -1,0 +1,107 @@
+name: Deploy to Release
+
+on:
+  push:
+    branches: [main, master]
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Download Termux bootstrap
+        run: |
+          chmod +x scripts/download-bootstrap.sh
+          ./scripts/download-bootstrap.sh
+
+      - name: Build bootstrap APK
+        run: ./gradlew assembleBootstrapDebug --stacktrace
+
+      - name: Build complete APK
+        run: |
+          chmod +x scripts/prebuild-complete.sh 2>/dev/null || true
+          ./scripts/prebuild-complete.sh 2>/dev/null || true
+          ./gradlew assembleCompleteDebug --stacktrace 2>/dev/null || echo "Complete flavor build skipped (prebuild assets may be missing)"
+        continue-on-error: true
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            LOG=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%an)" --no-merges)
+          else
+            LOG=$(git log --pretty=format:"- %s (%an)" -10 --no-merges)
+          fi
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+          echo "$LOG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload bootstrap APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-siri-bootstrap
+          path: app/build/outputs/apk/bootstrap/debug/*.apk
+          retention-days: 30
+
+      - name: Upload complete APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-siri-complete
+          path: app/build/outputs/apk/complete/debug/*.apk
+          retention-days: 30
+        continue-on-error: true
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Continuous Build — ${{ github.sha }}"
+          body: |
+            ## 🔧 Continuous Build
+
+            **Commit:** ${{ github.sha }}
+            **Branch:** ${{ github.ref_name }}
+
+            ### Changelog
+            ${{ env.CHANGELOG }}
+
+            ### APKs
+            Download artifacts from the Actions tab or the artifacts linked in this run.
+          draft: true
+          tag_name: "build-${{ github.run_number }}"
+          files: |
+            app/build/outputs/apk/bootstrap/debug/*.apk
+            app/build/outputs/apk/complete/debug/*.apk
+        continue-on-error: true
+
+      - name: Notify Telegram
+        if: always()
+        run: |
+          B_SIZE=$(stat -c%s app/build/outputs/apk/bootstrap/debug/*.apk 2>/dev/null | head -1 || echo "?")
+          B_SIZE_MB=$(echo "scale=1; $B_SIZE / 1048576" | bc 2>/dev/null || echo "?")
+
+          MESSAGE="📦 Open Siri — Build #${{ github.run_number }}
+          ✅ Bootstrap APK: ${B_SIZE_MB}MB
+          🔗 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ──
+          ${{ env.CHANGELOG }}"
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=$MESSAGE" \
+            -d "parse_mode=HTML" \
+            -d "disable_web_page_preview=true"

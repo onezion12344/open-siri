@@ -1,0 +1,83 @@
+name: Humanize PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  humanize:
+    name: Humanization Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          git diff --name-only origin/${{ github.base_ref }}...HEAD > changed_files.txt
+          cat changed_files.txt
+
+      - name: Check for UI/string changes
+        id: check
+        run: |
+          echo "### UI/UX Changes Detected" >> review.md
+          echo "" >> review.md
+
+          if grep -q "\.kt$\|\.xml$\|strings\.xml" changed_files.txt; then
+            echo "🔍 Files to review:" >> review.md
+            grep "\.kt$\|\.xml$" changed_files.txt | while read f; do
+              echo "- $f" >> review.md
+            done
+
+            # String resource analysis
+            if git diff origin/${{ github.base_ref }}...HEAD -- "**/strings.xml" | grep "^+" | grep -v "^+++" | grep -v "^@@" | grep "string name" > /tmp/new_strings.txt 2>/dev/null; then
+              echo "" >> review.md
+              echo "### 📝 New/Changed String Resources" >> review.md
+              echo '```' >> review.md
+              cat /tmp/new_strings.txt >> review.md
+              echo '```' >> review.md
+              echo "" >> review.md
+              echo "**Tone Check:**" >> review.md
+              echo "- [ ] Does the copy sound natural (not robotic)?" >> review.md
+              echo "- [ ] Is technical jargon explained or avoided?" >> review.md
+              echo "- [ ] Are error messages actionable (tell user what to do)?" >> review.md
+            fi
+
+            # Compose UI analysis
+            if git diff origin/${{ github.base_ref }}...HEAD -- "**/*.kt" | grep -E "^\+.*@Composable|^\+.*contentDescription|^\+.*\.color|^\+.*Typography|^\+.*\.padding|^\+.*\.size" > /tmp/ui_changes.txt 2>/dev/null; then
+              echo "" >> review.md
+              echo "### 🎨 Compose UI Changes" >> review.md
+              echo "" >> review.md
+              echo "**Material 3 Checklist:**" >> review.md
+              echo "- [ ] Colors use MaterialTheme.colorScheme (not hardcoded)" >> review.md
+              echo "- [ ] Typography uses MaterialTheme.typography" >> review.md
+              echo "- [ ] Spacing follows 4dp grid (0, 4, 8, 12, 16, 24, 32)" >> review.md
+            fi
+
+            # Accessibility check
+            if git diff origin/${{ github.base_ref }}...HEAD -- "**/*.kt" | grep -E "^\+.*clickable|^\+.*onClick|^\+.*IconButton|^\+.*Button" | grep -v "contentDescription" > /tmp/clickable_without_a11y.txt 2>/dev/null; then
+              echo "" >> review.md
+              echo "### ♿ Accessibility" >> review.md
+              echo "⚠️ New clickable elements found. Verify each has contentDescription:" >> review.md
+              echo '```' >> review.md
+              cat /tmp/clickable_without_a11y.txt >> review.md
+              echo '```' >> review.md
+            fi
+          else
+            echo "No UI files changed. Skipping humanization review." >> review.md
+          fi
+
+      - name: Post PR comment
+        if: steps.check.outputs.review
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: humanize-review
+          path: review.md

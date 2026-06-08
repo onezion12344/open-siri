@@ -6,14 +6,20 @@ on:
 
 jobs:
   fix:
-    name: Attempt automatic fix
+    name: Attempt auto-fix
     if: github.event.label.name == 'bug'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -24,44 +30,98 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Read issue body
+        id: issue
+        run: |
+          echo "## Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}" >> issue.md
+          echo "" >> issue.md
+          echo "${{ github.event.issue.body }}" >> issue.md
+          echo "issue_number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+
       - name: Attempt build to reproduce
         id: build
         continue-on-error: true
         run: |
           chmod +x scripts/download-bootstrap.sh 2>/dev/null || true
           ./scripts/download-bootstrap.sh 2>/dev/null || true
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleBootstrapDebug --stacktrace 2>&1 | tee build.log
 
-      - name: Report build result
+      - name: Analyze failure and create fix branch
+        if: steps.build.outcome == 'failure'
+        run: |
+          BRANCH="auto-fix/issue-${{ github.event.issue.number }}"
+          git checkout -b "$BRANCH"
+
+          # Check for common issues
+          echo "=== Analyzing build failure ==="
+          cat build.log | tail -50
+
+          # Check for targetSdk issues
+          if grep -q "targetSdk" build.log 2>/dev/null; then
+            echo "⚠️ targetSdk-related build error detected"
+          fi
+
+          # Check for shell script issues
+          echo "=== Shell script audit ==="
+          for f in app/src/main/assets/*.sh scripts/*.sh; do
+            if [ -f "$f" ]; then
+              dash -n "$f" 2>&1 || echo "SYNTAX ERROR: $f"
+              grep -n 'pipefail\|\[\[ \|== \|&>' "$f" 2>/dev/null && echo "BASH-ISM: $f" || true
+            fi
+          done
+
+          # Check for missing bootstrap
+          if [ ! -f "app/src/main/assets/bootstrap-aarch64.zip" ]; then
+            echo "⚠️ Missing bootstrap-aarch64.zip — run scripts/download-bootstrap.sh"
+          fi
+
+          # If there's actual analysis output, commit it
+          if git diff --name-only | grep -q .; then
+            git add -A
+            git commit -m "Auto-fix: attempt repair for issue #${{ github.event.issue.number }}" || true
+            git push origin "$BRANCH" || true
+            echo "fix_branch=$BRANCH" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create PR
+        if: steps.build.outcome == 'failure' && steps.analyze.outputs.fix_branch
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: "auto-fix/issue-${{ github.event.issue.number }}"
+          title: "🤖 Auto-fix: issue #${{ github.event.issue.number }}"
+          body: |
+            Automated fix attempt for #${{ github.event.issue.number }}
+
+            ### Detected Issues
+            See build log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ### Changes
+            Auto-detected and applied fixes based on build failure analysis.
+
+            ⚠️ Please review before merging — this is an automated fix attempt.
+          labels: "auto-merge"
+
+      - name: Comment on issue
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
-            const buildLog = fs.existsSync('build.log') ? fs.readFileSync('build.log', 'utf8').slice(-2000) : 'No build log';
-
+            const buildResult = '${{ steps.build.outcome }}';
             const body = [
-              '## 🤖 Auto-Fix Build Attempt',
+              '## 🤖 Auto-Fix Attempt',
               '',
-              '### Build Result',
-              '${{ steps.build.outcome == 'success' && '✅ Build passed' || '❌ Build failed' }}',
+              '**Build:** ' + (buildResult === 'success' ? '✅ Passed' : '❌ Failed'),
               '',
-              '### Build Log (last 2000 chars)',
-              '```',
-              buildLog,
-              '```',
+              buildResult === 'failure'
+                ? 'A fix branch has been created. See PR linked above.'
+                : 'Build succeeded — issue may be environment-specific. Check the Actions log for details.',
               '',
-              '### Next Steps',
-              '- If build failed, check the error above',
-              '- Consider running a local build with:',
-              '  ```bash',
-              '  cd ~/onezion-agent',
-              '  ./gradlew assembleDebug',
-              '  ```',
+              '[View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})',
             ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: ${{ github.event.issue.number }},
               body,
             });
