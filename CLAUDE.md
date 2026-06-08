@@ -36,7 +36,8 @@ Phase data is read from the install script's stdout lines matching `[phase:N] de
 - 5: Verifying installation — health checks
 
 ## Constraints
-- minSdk 26, targetSdk 35, compileSdk 35
+- minSdk 26, targetSdk 28, compileSdk 35
+- targetSdk=28 is CRITICAL — allows executing binaries from app data directory (SELinux W^X bypass). Do NOT raise above 28.
 - Package: com.opensiri.agent.bootstrap
 - No network libraries needed — the install runs in Termux shell
 - Script runs via ProcessBuilder, output parsed line by line

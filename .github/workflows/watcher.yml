@@ -1,0 +1,81 @@
+name: Upstream Release Watcher
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  watch:
+    name: Check for upstream releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Hermes Agent releases
+        id: hermes
+        run: |
+          LATEST=$(curl -sS https://api.github.com/repos/nousresearch/hermes-agent/releases/latest | jq -r '.tag_name // empty')
+          if [ -n "$LATEST" ]; then
+            echo "latest=$LATEST" >> $GITHUB_OUTPUT
+            echo "Hermes Agent latest: $LATEST"
+          else
+            echo "Could not fetch Hermes Agent releases"
+          fi
+
+      - name: Check Termux bootstrap releases
+        id: termux
+        run: |
+          LATEST=$(curl -sS https://api.github.com/repos/termux/termux-packages/releases | jq -r '[.[] | select(.tag_name | startswith("bootstrap-"))][0].tag_name // empty')
+          if [ -n "$LATEST" ]; then
+            echo "latest=$LATEST" >> $GITHUB_OUTPUT
+            echo "Termux bootstrap latest: $LATEST"
+          fi
+
+      - name: Check Android build-tools
+        id: android
+        run: |
+          echo "Checking Android SDK updates..."
+          echo "Run 'sdkmanager --list' locally to check for new platform/build-tools versions"
+
+      - name: Create issue if updates found
+        if: steps.hermes.outputs.latest != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const hermesLatest = '${{ steps.hermes.outputs.latest }}';
+            const termuxLatest = '${{ steps.termux.outputs.latest }}';
+
+            const body = [
+              '## 🔔 Upstream Release Update',
+              '',
+              'The following upstream releases were detected:',
+              '',
+              hermesLatest ? `- **Hermes Agent**: \`${hermesLatest}\` ([releases](https://github.com/nousresearch/hermes-agent/releases))` : '',
+              termuxLatest ? `- **Termux Bootstrap**: \`${termuxLatest}\` ([releases](https://github.com/termux/termux-packages/releases))` : '',
+              '',
+              '### Actions needed',
+              '- [ ] Update bootstrap URL in `scripts/download-bootstrap.sh` if Termux updated',
+              '- [ ] Test Hermes Agent upgrade in the proot environment',
+              '- [ ] Rebuild and test APK',
+            ].filter(Boolean).join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['upstream-update'],
+              state: 'open',
+            });
+
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Upstream release check',
+                body,
+                labels: ['upstream-update'],
+              });
+            }

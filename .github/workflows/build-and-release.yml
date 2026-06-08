@@ -1,0 +1,137 @@
+name: Build and Release APKs
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: '17'
+  GRADLE_OPTS: '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true'
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+
+      - name: Download Termux bootstrap
+        run: |
+          chmod +x scripts/download-bootstrap.sh
+          ./scripts/download-bootstrap.sh
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify APK output
+        run: |
+          APK_DIR="app/build/outputs/apk/debug"
+          echo "Expected APK directory: $APK_DIR"
+          ls -lah "$APK_DIR"/
+          echo "APK_SIZE=$(stat -c%s "$APK_DIR"/*.apk)" >> $GITHUB_ENV
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-siri-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+          compression-level: 0
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: open-siri-debug
+          path: release-apks/
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## Open Siri for Android — Release ${{ github.ref_name }}
+
+          ### 📦 Open Siri Bootstrap Edition
+          - Downloads Hermes Agent dependencies on first launch (~3-5 min)
+          - Embeds Termux Linux environment via proot
+          - Requires internet for initial setup
+
+          ### Installation
+          1. Download the APK
+          2. Enable "Install from unknown sources" in Android settings
+          3. Install and launch Open Siri
+
+          ### Requirements
+          - Android 8.0+ (API 26+)
+          - ~500 MB free storage
+          - ARM64 (aarch64) device
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: release-apks/*.apk
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pr-comment:
+    name: Comment on PR
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: open-siri-debug
+          path: apks/
+
+      - name: Calculate APK size
+        id: sizes
+        run: |
+          echo "## 📦 APK Build Artifacts" > pr-comment.md
+          echo "" >> pr-comment.md
+          for apk in apks/*.apk; do
+            if [ -f "$apk" ]; then
+              name=$(basename "$apk")
+              size=$(stat -c%s "$apk")
+              size_mb=$(echo "scale=1; $size / 1048576" | bc)
+              echo "- **$name**: ${size_mb} MB ($size bytes)" >> pr-comment.md
+            fi
+          done
+          echo "" >> pr-comment.md
+          echo "⬇️ Download APK from the **Actions** tab → latest workflow run → Artifacts." >> pr-comment.md
+
+      - name: Post PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: apk-build-artifacts
+          path: pr-comment.md

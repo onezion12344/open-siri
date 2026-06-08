@@ -11,7 +11,11 @@ android {
     defaultConfig {
         applicationId = "com.opensiri.agent.bootstrap"
         minSdk = 26
-        targetSdk = 35
+        // targetSdk 28 allows executing binaries from app data directory.
+        // Android 10+ (targetSdk 29+) enforces W^X via SELinux which blocks
+        // proot from executing Termux binaries. Termux (F-Droid) uses the same approach.
+        // Note: Google Play rejects targetSdk < 34 — side-load only.
+        targetSdk = 28
         versionCode = 2
         versionName = "0.2.0"
     }

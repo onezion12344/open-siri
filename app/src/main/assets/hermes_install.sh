@@ -4,8 +4,8 @@
 # No bash-specific syntax — tested against dash
 set -e
 
-HERMES_HOME="${HERMES_HOME:-/data/user/0/com.onezion.agent.bootstrap/files/home}"
-USR_DIR="${USR_DIR:-/data/user/0/com.onezion.agent.bootstrap/files/usr}"
+HERMES_HOME="${HERMES_HOME:-/data/user/0/com.opensiri.agent.bootstrap/files/home}"
+USR_DIR="${USR_DIR:-/data/user/0/com.opensiri.agent.bootstrap/files/usr}"
 TMPDIR="$USR_DIR/tmp"
 LOG="$TMPDIR/hermes_install.log"
 PHASE_FILE="$TMPDIR/install_phase"
@@ -119,7 +119,7 @@ if [ ! -d "$HERMES_DIR" ]; then
 fi
 
 # Verify clone succeeded
-if [ ! -d "$HERMES_DIR/package.json" ] && [ ! -f "$HERMES_DIR/package.json" ]; then
+if [ ! -f "$HERMES_DIR/package.json" ]; then
     log "✗ Clone appears incomplete — package.json missing"
     exit 1
 fi
