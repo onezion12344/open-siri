@@ -1,3 +1,16 @@
 <resources>
     <string name="app_name">Open Siri</string>
+    <string name="accessibility_service_description">Open Siri uses Accessibility Service to read screen content and perform automated actions (taps, swipes, text input) on behalf of AI agents. No data is sent to third parties.</string>
+    <string name="status_initializing">Initializing Open Siri…</string>
+    <string name="status_installing">Installing environment…</string>
+    <string name="status_running">Open Siri is running</string>
+    <string name="status_error">Installation failed</string>
+    <string name="btn_retry">Retry</string>
+    <string name="btn_settings">Settings</string>
+    <string name="phase_checking">Checking environment</string>
+    <string name="phase_deps">Installing dependencies</string>
+    <string name="phase_download">Downloading agent</string>
+    <string name="phase_npm">Installing packages</string>
+    <string name="phase_build">Building</string>
+    <string name="phase_verify">Verifying</string>
 </resources>
