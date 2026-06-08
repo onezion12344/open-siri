@@ -100,4 +100,7 @@ dependencies {
 
     // WebView
     implementation("androidx.webkit:webkit:1.12.1")
+
+    // Testing (pure-JVM, no Robolectric)
+    testImplementation("junit:junit:4.13.2")
 }
