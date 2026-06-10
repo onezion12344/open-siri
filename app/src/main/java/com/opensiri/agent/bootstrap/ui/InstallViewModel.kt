@@ -115,7 +115,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val prefix = paths.prefixDir
         val depLib = "$prefix/data/data/com.termux/files/usr/lib"
         val aptConf = "$prefix/etc/apt/apt.conf"
-        val pkgs = arrayOf("c-ares", "libicu", "libsqlite", "zlib", "openssl", "git", "npm", "nodejs-lts")
+        val pkgs = arrayOf("c-ares", "libicu", "libsqlite", "zlib", "openssl", "git", "python", "python-pip", "python-pyyaml", "npm", "nodejs-lts")
         try {
             addLog("Pre-installing dependencies (Node.js, npm, git)…")
             // base env that makes Termux binaries work
