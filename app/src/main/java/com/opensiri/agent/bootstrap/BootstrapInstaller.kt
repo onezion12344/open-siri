@@ -245,6 +245,54 @@ object BootstrapInstaller {
         }
 
         Log.i(TAG, "Fixed Termux paths -> $prefix")
+
+        // Fix shebangs in all text scripts under bin/ — these have
+        // #!/data/data/com.termux/files/usr/bin/… hardcoded and won't
+        // resolve on our prefix without rewriting.
+        // We use a shell sed command because Kotlin readText()/writeText()
+        // can corrupt binary-adjacent script files (some bin/ scripts
+        // contain inline binary data or escape sequences).
+        try {
+            val pb = ProcessBuilder()
+                .command(
+                    "sh", "-c",
+                    "for f in $prefix/bin/*; do head -c2 \"\$f\" | grep -qx '#!' && sed -i \"s|$termuxPrefix|$prefix|g\" \"\$f\"; done"
+                )
+                .redirectErrorStream(true)
+            val p = pb.start()
+            p.waitFor()
+            Log.i(TAG, "Fixed shebangs in bin/ (exit=${p.exitValue()})")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fix shebangs: ${e.message}")
+        }
+    }
+
+    /**
+     * Replace hardcoded Termux paths in a script file extracted from the bootstrap.
+     *
+     * The Termux bootstrap is built for /data/data/com.termux/files/usr. Scripts
+     * (bash, pkg, apt, dpkg, shebangs, etc.) have this path baked into their
+     * first line and throughout the script body. If we don't rewrite them:
+     *  - `#!/data/data/com.termux/…/bash` can't find bash → "inaccessible or not found"
+     *  - `$PREFIX` and internal references are wrong → apt/dpkg fail
+     */
+    private fun fixShebangs(file: File, oldPrefix: String, newPrefix: String) {
+        try {
+            // Check first 2 bytes: is this a shebang script?
+            // readNBytes guarantees we get exactly 2 bytes or EOF.
+            val head = ByteArray(2)
+            file.inputStream().use { it.readNBytes(head, 0, 2) }
+            if (head[0] != '#'.code.toByte() || head[1] != '!'.code.toByte()) return
+
+            // It's a script — rewrite all occurrences of the old prefix
+            val original = file.readText()
+            val fixed = original.replace(oldPrefix, newPrefix)
+            if (fixed != original) {
+                file.writeText(fixed)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fix shebangs in ${file.name}: ${e.message}")
+        }
     }
 
     private fun shouldBeExecutable(entryName: String): Boolean {

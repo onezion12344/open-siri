@@ -3,6 +3,7 @@ package com.opensiri.agent.bootstrap.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.opensiri.agent.bootstrap.BootstrapInstaller
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -102,28 +103,56 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private fun runInstallScript() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Copy install script out of APK assets/ into filesDir where the
-                // shell can actually read it. `sh -c "cat assets/hermes_install.sh"`
+                val context = getApplication<Application>()
+
+                // Step 1: Extract the Termux bootstrap into filesDir/usr so the
+                // shell can find pkg, proot, git, node, npm, etc. Without this
+                // step, $PREFIX/bin/pkg doesn't exist and 'pkg install' fails.
+                addLog("Extracting Termux bootstrap...")
+                val paths = BootstrapInstaller.getPaths(context)
+                if (!BootstrapInstaller.isBootstrapInstalled(context)) {
+                    BootstrapInstaller.install(context, onProgress = { addLog(it) })
+                } else {
+                    addLog("Bootstrap already installed at ${paths.prefixDir}")
+                }
+
+                // Step 2: Copy install script out of APK assets/ into filesDir where
+                // the shell can actually read it. `sh -c "cat assets/hermes_install.sh"`
                 // does NOT work — `assets/` is a virtual path inside the APK and
                 // the shell's CWD has no such file.
-                val context = getApplication<Application>()
                 val scriptFile = File(context.filesDir, "hermes_install.sh")
                 context.assets.open("hermes_install.sh").use { input ->
                     scriptFile.outputStream().use { output -> input.copyTo(output) }
                 }
-                // Make executable — Android's filesDir is on /data, exec bits are
-                // respected for native binaries (proot), and `sh script.sh` doesn't
-                // need the bit, but chmod anyway for consistency.
                 scriptFile.setExecutable(true)
 
                 val process = ProcessBuilder()
                     .command("sh", scriptFile.absolutePath)
                     .redirectErrorStream(true)
                     .apply {
-                        // Pass the real applicationId so the script can find
-                        // /data/user/0/<applicationId>/files/ — each flavor
-                        // (.bootstrap, .complete) has a different suffix.
-                        environment()["PACKAGE"] = context.packageName
+                        val env = environment()
+                        // Termux prefix so the script, pkg, and apt know where
+                        // everything lives. Maps to BootstrapInstaller.getPaths().
+                        env["PREFIX"] = paths.prefixDir
+                        env["HOME"] = paths.homeDir
+                        env["TMPDIR"] = paths.tmpDir
+                        // The script reads PACKAGE for /data/user/0/<PACKAGE> prefix.
+                        env["PACKAGE"] = context.packageName
+                        // Put Termux tools FIRST in PATH so `pkg install` finds them.
+                        env["PATH"] = "${paths.prefixDir}/bin:${paths.prefixDir}/bin/applets:/system/bin:/system/xbin"
+                        // Termux binaries (mkdir, bash, coreutils, curl, etc.) need
+                        // libandroid-support.so and related libs from the bootstrap.
+                        env["LD_LIBRARY_PATH"] = "${paths.prefixDir}/lib:${paths.prefixDir}/data/data/com.termux/files/usr/lib"
+                        // Git needs to find its helpers (git-remote-https, etc.) at
+                        // the Termux-compiled path inside our prefix.
+                        env["GIT_EXEC_PATH"] = "${paths.prefixDir}/data/data/com.termux/files/usr/libexec/git-core"
+                        // Git SSL CA bundle — skip for bootstrap; real certs require
+                        // ca-certificates package. On first launch we may not have it.
+                        env["GIT_SSL_NO_VERIFY"] = "true"
+                        // Android file descriptor sanitizer interferes with Termux
+                        // binaries (apt-get, dpkg, etc.) that were compiled for a
+                        // different libc. Shut it down entirely in the install env.
+                        env["ANDROID_FDSAN"] = "off"
                     }
                     .start()
 
