@@ -100,6 +100,117 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    /**
+     * Pre-install git, node, npm + transitive dependencies via a throwaway
+     * shell script — the Kotlin ProcessBuilder approach is too flaky with
+     * env var escaping. This script uses the same apt-get-download +
+     * dpkg-deb-x pattern we verified manually on the emulator.
+     */
+    /**
+     * Pre-install nodejs-lts + deps using apt-get download + dpkg-deb -x.
+     * We call apt-get directly (no wrapper script file needed) — the same
+     * commands we verified manually via adb shell.
+     */
+    private fun preInstallDeps(context: Application, paths: BootstrapInstaller.Paths) {
+        val prefix = paths.prefixDir
+        val depLib = "$prefix/data/data/com.termux/files/usr/lib"
+        val aptConf = "$prefix/etc/apt/apt.conf"
+        val pkgs = arrayOf("c-ares", "libicu", "libsqlite", "zlib", "openssl", "git", "npm", "nodejs-lts")
+        try {
+            addLog("Pre-installing dependencies (Node.js, npm, git)…")
+            // base env that makes Termux binaries work
+            val baseEnv = mapOf(
+                "ANDROID_FDSAN" to "off",
+                "LD_LIBRARY_PATH" to "$prefix/lib:$depLib",
+                "PATH" to "$prefix/bin:/system/bin",
+                "PREFIX" to prefix,
+                "HOME" to paths.homeDir,
+                "TMPDIR" to prefix + "/tmp",
+            )
+
+            // Must update package list first (apt-get update) — the
+            // var/lib/apt/lists/ directory is empty after fresh bootstrap
+            // extraction.
+            addLog("  Updating package index…")
+            val updatePb = ProcessBuilder(
+                "$prefix/bin/apt-get",
+                "-q",
+                "-o", "APT::Get::AllowUnauthenticated=true",
+                "-o", "Acquire::AllowInsecureRepositories=true",
+                "-c", aptConf,
+                "update"
+            ).redirectErrorStream(true)
+            updatePb.environment().putAll(baseEnv)
+            val up = updatePb.start()
+            drain(up.inputStream)
+            up.waitFor()
+
+            for (pkg in pkgs) {
+                addLog("  Downloading $pkg…")
+                val pb = ProcessBuilder(
+                    "$prefix/bin/apt-get",
+                    "-q",
+                    "-o", "APT::Get::AllowUnauthenticated=true",
+                    "-o", "Acquire::AllowInsecureRepositories=true",
+                    "-c", aptConf,
+                    "download", pkg
+                )
+                    .directory(File(prefix, "tmp"))
+                    .redirectErrorStream(true)
+                pb.environment().putAll(baseEnv)
+                val p = pb.start()
+                drain(p.inputStream) // discard apt-get progress output
+                val rc = p.waitFor()
+                if (rc != 0) { addLog("  ⚠ download $pkg returned $rc", "warn"); continue }
+
+                // Find and extract the .deb
+                val tmpDir = File(prefix, "tmp")
+                val deb = tmpDir.listFiles()?.find { it.name.startsWith("${pkg}_") && it.name.endsWith(".deb") }
+                if (deb == null) { addLog("  ⚠ deb not found for $pkg", "warn"); continue }
+
+                addLog("  Extracting ${deb.name}…")
+                val exPb = ProcessBuilder("$prefix/bin/dpkg-deb", "-x", deb.absolutePath, prefix)
+                    .redirectErrorStream(true)
+                exPb.environment().putAll(baseEnv)
+                val exP = exPb.start()
+                drain(exP.inputStream)
+                exP.waitFor()
+                deb.delete()
+            }
+
+            // Symlink dpkg-installed binaries to $PREFIX/bin so ensure_cmd finds them
+            val dpkgBin = File("$prefix/data/data/com.termux/files/usr/bin")
+            if (dpkgBin.isDirectory) {
+                dpkgBin.listFiles()?.forEach { f ->
+                    val target = File(File(prefix, "bin"), f.name)
+                    if (!target.exists()) {
+                        try { java.nio.file.Files.createSymbolicLink(target.toPath(), f.toPath()) } catch (_: Exception) {}
+                    }
+                }
+            }
+            // npm is a JS package (not a binary). Create a wrapper script so
+            // the install script's `npm install` works.
+            val npmJs = "$prefix/data/data/com.termux/files/usr/lib/node_modules/npm/bin/npm-cli.js"
+            val npmBin = File(File(prefix, "bin"), "npm")
+            if (!npmBin.exists() && File(npmJs).exists()) {
+                npmBin.writeText(
+                    "#!/system/bin/sh\n" +
+                    "exec " + prefix + "/bin/node " + npmJs + " \"\$@\"\n"
+                )
+                npmBin.setExecutable(true)
+            }
+            addLog("Pre-install complete", "success")
+        } catch (e: Exception) {
+            addLog("⚠ Pre-install error: ${e.message}", "warn")
+        }
+    }
+
+    /** Drain an InputStream without Java 11's nullOutputStream(). */
+    private fun drain(input: java.io.InputStream) {
+        val buf = ByteArray(4096)
+        try { while (input.read(buf) != -1) { } } catch (_: Exception) {}
+    }
+
     private fun runInstallScript() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -116,7 +227,15 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     addLog("Bootstrap already installed at ${paths.prefixDir}")
                 }
 
-                // Step 2: Copy install script out of APK assets/ into filesDir where
+                // Step 2: Pre-download git, node, npm + their deps using
+                // apt-get download + dpkg-deb -x (dpkg -i fails because
+                // preinst scripts use chroot, which requires root/proot).
+                // The install script's ensure_cmd checks `command -v <cmd>`
+                // first, so pre-installed tools skip pkg entirely.
+                preInstallDeps(context, paths)
+
+                // Step 3: Copy install script out of APK assets/ into filesDir where
+                // Step 4: Copy install script out of APK assets/ into filesDir where
                 // the shell can actually read it. `sh -c "cat assets/hermes_install.sh"`
                 // does NOT work — `assets/` is a virtual path inside the APK and
                 // the shell's CWD has no such file.
