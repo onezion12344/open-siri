@@ -115,7 +115,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val prefix = paths.prefixDir
         val depLib = "$prefix/data/data/com.termux/files/usr/lib"
         val aptConf = "$prefix/etc/apt/apt.conf"
-        val pkgs = arrayOf("c-ares", "libexpat", "libicu", "libsqlite", "zlib", "openssl", "git", "python", "npm", "nodejs-lts")
+        val pkgs = arrayOf("libtalloc", "libandroid-shmem", "proot", "c-ares", "libexpat", "libffi", "libicu", "libsqlite", "zlib", "openssl", "git", "python", "python-pip", "npm", "nodejs-lts")
         try {
             addLog("Pre-installing dependencies (Node.js, npm, git)…")
             // base env that makes Termux binaries work
@@ -204,6 +204,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val sedP = sedPb.start()
             drain(sedP.inputStream)
             sedP.waitFor()
+            // Install pure-Python deps via pip (rich, dotenv, etc.).
+            // pyyaml/psutil are native and may fail — we provide fallbacks.
+            val pipPb = ProcessBuilder(
+                "$prefix/bin/python3", "$prefix/bin/pip",
+                "install", "--no-deps", "rich", "python-dotenv"
+            ).redirectErrorStream(true)
+            pipPb.environment().putAll(baseEnv)
+            val pipP = pipPb.start()
+            drain(pipP.inputStream)
+            pipP.waitFor()
+            // yaml fallback created AFTER hermes-agent is cloned
+            // by runInstallScript — see below.
             // npm is a JS package (not a binary). The Termux npm wrapper
             // has #!/data/data/com.termux/… which won't work. Overwrite it
             // with one that calls node directly at our prefix.
@@ -311,6 +323,37 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     markCurrentPhaseFailed()
                 } else {
                     completeAllPhases()
+                    // Post-install: create yaml fallback so hermes CLI
+                    // can start even without the pyyaml C extension.
+                    val yamlFile = File("${paths.prefixDir}/hermes-agent/yaml.py")
+                    if (!yamlFile.exists()) {
+                        yamlFile.writeText(
+                            "import re\n" +
+                            "def safe_load(f):\n" +
+                            "  if hasattr(f,'read'): t=f.read()\n" +
+                            "  else: t=open(f).read()\n" +
+                            "  r={}\n" +
+                            "  for l in t.split('\\n'):\n" +
+                            "    l=l.strip()\n" +
+                            "    if not l or l.startswith('#'): continue\n" +
+                            "    if ':' in l:\n" +
+                            "      k,_,v=l.partition(':')\n" +
+                            "      k=k.strip().strip('\"').strip(\"'\")\n" +
+                            "      v=v.strip().strip('\"').strip(\"'\")\n" +
+                            "      if v.lower()=='true': v=True\n" +
+                            "      elif v.lower()=='false': v=False\n" +
+                            "      elif v.isdigit(): v=int(v)\n" +
+                            "      elif re.match(r'^-?\\d+\\.\\d+$',v): v=float(v)\n" +
+                            "      r[k.strip()]=v\n" +
+                            "  return r\n" +
+                            "def safe_dump(d,f=None):\n" +
+                            "  if f is None: import sys; f=sys.stdout\n" +
+                            "  for k,v in d.items(): f.write(f'{k}: {v}\\n')\n" +
+                            "load=safe_load\ndump=safe_dump\n" +
+                            "class YAMLError(Exception): pass\n"
+                        )
+                        addLog("✓ yaml fallback installed")
+                    }
                 }
             } catch (e: Exception) {
                 addLog("Fatal: ${e.message}", "error")
