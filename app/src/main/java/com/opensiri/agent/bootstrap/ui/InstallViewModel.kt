@@ -188,14 +188,19 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            // npm is a JS package (not a binary). Create a wrapper script so
-            // the install script's `npm install` works.
+            // npm is a JS package (not a binary). The Termux npm wrapper
+            // has #!/data/data/com.termux/… which won't work. Overwrite it
+            // with one that calls node directly at our prefix.
             val npmJs = "$prefix/data/data/com.termux/files/usr/lib/node_modules/npm/bin/npm-cli.js"
             val npmBin = File(File(prefix, "bin"), "npm")
-            if (!npmBin.exists() && File(npmJs).exists()) {
+            if (File(npmJs).exists()) {
+                npmBin.delete()
                 npmBin.writeText(
                     "#!/system/bin/sh\n" +
-                    "exec " + prefix + "/bin/node " + npmJs + " \"\$@\"\n"
+                    // --ignore-scripts prevents native module compilation
+                    // (node-pty, etc.) which needs gcc/make/node-gyp.
+                    // Native addons are optional for most agent features.
+                    "exec " + prefix + "/bin/node " + npmJs + " \"\$@\" --ignore-scripts\n"
                 )
                 npmBin.setExecutable(true)
             }
