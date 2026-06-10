@@ -188,26 +188,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
             }
-            // npm is a JS package (not a binary). The Termux npm wrapper
-            // has #!/data/data/com.termux/… which won't work. Overwrite it
-            // with one that calls node directly at our prefix.
-            val npmJs = "$prefix/data/data/com.termux/files/usr/lib/node_modules/npm/bin/npm-cli.js"
-            val npmBin = File(File(prefix, "bin"), "npm")
-            if (File(npmJs).exists()) {
-                npmBin.delete()
-                npmBin.writeText(
-                    "#!/system/bin/sh\n" +
-                    // --ignore-scripts prevents native module compilation
-                    // (node-pty, etc.) which needs gcc/make/node-gyp.
-                    // Native addons are optional for most agent features.
-                    "exec " + prefix + "/bin/node " + npmJs + " \"\$@\" --ignore-scripts\n"
-                )
-                npmBin.setExecutable(true)
-            }
             // Fix shebangs in all scripts (pip, python, etc.) that came
             // from dpkg-installed packages. These have the compiled-in
             // Termux path which doesn't exist. Use sed, same as
             // BootstrapInstaller.
+            // MUST run BEFORE npm wrapper — sed would corrupt our npm path.
             val termuxPath = "/data/data/com.termux/files/usr"
             val sedPb = ProcessBuilder(
                 "sh", "-c",
@@ -219,15 +204,23 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val sedP = sedPb.start()
             drain(sedP.inputStream)
             sedP.waitFor()
-            // Install pyyaml via pip (needed by hermes CLI)
-            val pipPb = ProcessBuilder(
-                "$prefix/bin/python3", "$prefix/bin/pip",
-                "install", "pyyaml"
-            ).redirectErrorStream(true)
-            pipPb.environment().putAll(baseEnv)
-            val pipP = pipPb.start()
-            drain(pipP.inputStream)
-            pipP.waitFor()
+            // npm is a JS package (not a binary). The Termux npm wrapper
+            // has #!/data/data/com.termux/… which won't work. Overwrite it
+            // with one that calls node directly at our prefix.
+            // MUST run AFTER sed — otherwise sed replaces the Termux path
+            // INSIDE our npmJs path, doubling the prefix.
+            val npmJs = "$prefix/data/data/com.termux/files/usr/lib/node_modules/npm/bin/npm-cli.js"
+            val npmBin = File(File(prefix, "bin"), "npm")
+            if (File(npmJs).exists()) {
+                npmBin.delete()
+                npmBin.writeText(
+                    "#!/system/bin/sh\n" +
+                    // --ignore-scripts prevents native module compilation
+                    // (node-pty, etc.) which needs gcc/make/node-gyp.
+                    "exec " + prefix + "/bin/node " + npmJs + " \"\$@\" --ignore-scripts\n"
+                )
+                npmBin.setExecutable(true)
+            }
             addLog("Pre-install complete", "success")
         } catch (e: Exception) {
             addLog("⚠ Pre-install error: ${e.message}", "warn")
