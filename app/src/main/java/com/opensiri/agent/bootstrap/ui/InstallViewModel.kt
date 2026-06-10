@@ -1,6 +1,7 @@
 package com.opensiri.agent.bootstrap.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 
 enum class PhaseState { PENDING, ACTIVE, COMPLETED, FAILED }
@@ -74,7 +76,7 @@ data class InstallState(
     val hasError: Boolean = false,
 )
 
-class InstallViewModel : ViewModel() {
+class InstallViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(InstallState())
     val state: StateFlow<InstallState> = _state.asStateFlow()
 
@@ -100,9 +102,29 @@ class InstallViewModel : ViewModel() {
     private fun runInstallScript() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // Copy install script out of APK assets/ into filesDir where the
+                // shell can actually read it. `sh -c "cat assets/hermes_install.sh"`
+                // does NOT work — `assets/` is a virtual path inside the APK and
+                // the shell's CWD has no such file.
+                val context = getApplication<Application>()
+                val scriptFile = File(context.filesDir, "hermes_install.sh")
+                context.assets.open("hermes_install.sh").use { input ->
+                    scriptFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                // Make executable — Android's filesDir is on /data, exec bits are
+                // respected for native binaries (proot), and `sh script.sh` doesn't
+                // need the bit, but chmod anyway for consistency.
+                scriptFile.setExecutable(true)
+
                 val process = ProcessBuilder()
-                    .command("sh", "-c", "cat assets/hermes_install.sh | sh")
+                    .command("sh", scriptFile.absolutePath)
                     .redirectErrorStream(true)
+                    .apply {
+                        // Pass the real applicationId so the script can find
+                        // /data/user/0/<applicationId>/files/ — each flavor
+                        // (.bootstrap, .complete) has a different suffix.
+                        environment()["PACKAGE"] = context.packageName
+                    }
                     .start()
 
                 val reader = BufferedReader(InputStreamReader(process.inputStream))

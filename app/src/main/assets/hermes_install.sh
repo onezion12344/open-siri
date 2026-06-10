@@ -4,8 +4,12 @@
 # No bash-specific syntax — tested against dash
 set -e
 
-HERMES_HOME="${HERMES_HOME:-/data/user/0/com.opensiri.agent.bootstrap/files/home}"
-USR_DIR="${USR_DIR:-/data/user/0/com.opensiri.agent.bootstrap/files/usr}"
+# PACKAGE is exported by InstallViewModel (from BuildConfig.APPLICATION_ID),
+# which knows the correct applicationId including the ".bootstrap" / ".complete"
+# flavor suffix. Fallback is the dev-debug applicationId.
+PACKAGE="${PACKAGE:-com.opensiri.agent.bootstrap.bootstrap}"
+HERMES_HOME="${HERMES_HOME:-/data/user/0/$PACKAGE/files/home}"
+USR_DIR="${USR_DIR:-/data/user/0/$PACKAGE/files/usr}"
 TMPDIR="$USR_DIR/tmp"
 LOG="$TMPDIR/hermes_install.log"
 PHASE_FILE="$TMPDIR/install_phase"
