@@ -35,17 +35,21 @@ jobs:
 
       - name: Build complete APK
         run: |
-          chmod +x scripts/prebuild-complete.sh 2>/dev/null || true
-          ./scripts/prebuild-complete.sh 2>/dev/null || true
-          ./gradlew assembleCompleteDebug --stacktrace 2>/dev/null || echo "Skipped"
-        continue-on-error: true
+          if [ -f scripts/prebuild-complete.sh ]; then
+            chmod +x scripts/prebuild-complete.sh
+            if [ -d app/src/complete/assets/complete/debs ]; then
+              ./gradlew assembleCompleteDebug --stacktrace
+            else
+              echo "SKIP: prebuild assets missing — run scripts/prebuild-complete.sh first"
+            fi
+          fi
 
       - name: Get APK sizes
         id: sizes
         run: |
-          B_APK=$(ls app/build/outputs/apk/bootstrap/debug/*.apk | head -1)
-          B_SIZE=$(stat -c%s "$B_APK")
-          B_MB=$(echo "scale=1; $B_SIZE / 1048576" | bc)
+          B_APK=$(ls app/build/outputs/apk/bootstrap/debug/*.apk 2>/dev/null | head -1)
+          B_SIZE=$(stat -c%s "$B_APK" 2>/dev/null || echo "0")
+          B_MB=$(echo "scale=1; $B_SIZE / 1048576" 2>/dev/null | bc || echo "?")
           echo "bootstrap_size=$B_MB MB" >> $GITHUB_OUTPUT
           echo "bootstrap_bytes=$B_SIZE" >> $GITHUB_OUTPUT
 
@@ -92,7 +96,11 @@ jobs:
 
           echo "## 📦 APKs" >> release-notes.md
           echo "- **Bootstrap Edition:** ${{ steps.sizes.outputs.bootstrap_size }}" >> release-notes.md
-          echo "- **Complete Edition:** ${{ steps.sizes.outputs.complete_size }}" >> release-notes.md
+          if [ "${{ steps.sizes.outputs.complete_size }}" != "N/A" ]; then
+            echo "- **Complete Edition:** ${{ steps.sizes.outputs.complete_size }}" >> release-notes.md
+          else
+            echo "- **Complete Edition:** coming soon (needs prebuild assets)" >> release-notes.md
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
