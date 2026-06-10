@@ -354,6 +354,19 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                         )
                         addLog("✓ yaml fallback installed")
                     }
+                    // Create hermes wrapper script (not symlink — the hermes script
+                    // has #!/usr/bin/env python3 which won't resolve on Android).
+                    val hermesBin = File("${paths.prefixDir}/hermes-agent/hermes")
+                    val hermesWrapper = File("${paths.prefixDir}/bin/hermes")
+                    if (hermesBin.exists()) {
+                        hermesWrapper.delete()
+                        hermesWrapper.writeText(
+                            "#!/system/bin/sh\n" +
+                            "exec ${paths.prefixDir}/bin/python3 " +
+                            hermesBin.absolutePath + " \"\$@\"\n"
+                        )
+                        hermesWrapper.setExecutable(true)
+                    }
                 }
             } catch (e: Exception) {
                 addLog("Fatal: ${e.message}", "error")
