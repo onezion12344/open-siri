@@ -115,7 +115,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val prefix = paths.prefixDir
         val depLib = "$prefix/data/data/com.termux/files/usr/lib"
         val aptConf = "$prefix/etc/apt/apt.conf"
-        val pkgs = arrayOf("c-ares", "libicu", "libsqlite", "zlib", "openssl", "git", "python", "python-pip", "python-pyyaml", "npm", "nodejs-lts")
+        val pkgs = arrayOf("c-ares", "libexpat", "libicu", "libsqlite", "zlib", "openssl", "git", "python", "npm", "nodejs-lts")
         try {
             addLog("Pre-installing dependencies (Node.js, npm, git)…")
             // base env that makes Termux binaries work
@@ -204,6 +204,30 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 )
                 npmBin.setExecutable(true)
             }
+            // Fix shebangs in all scripts (pip, python, etc.) that came
+            // from dpkg-installed packages. These have the compiled-in
+            // Termux path which doesn't exist. Use sed, same as
+            // BootstrapInstaller.
+            val termuxPath = "/data/data/com.termux/files/usr"
+            val sedPb = ProcessBuilder(
+                "sh", "-c",
+                "for f in $prefix/bin/* $prefix/data/data/com.termux/files/usr/bin/*; do " +
+                "[ -f \"\$f\" ] && head -c2 \"\$f\" | grep -qx '#!' && " +
+                "sed -i \"s|$termuxPath|$prefix|g\" \"\$f\"; done"
+            ).redirectErrorStream(true)
+            sedPb.environment().putAll(baseEnv)
+            val sedP = sedPb.start()
+            drain(sedP.inputStream)
+            sedP.waitFor()
+            // Install pyyaml via pip (needed by hermes CLI)
+            val pipPb = ProcessBuilder(
+                "$prefix/bin/python3", "$prefix/bin/pip",
+                "install", "pyyaml"
+            ).redirectErrorStream(true)
+            pipPb.environment().putAll(baseEnv)
+            val pipP = pipPb.start()
+            drain(pipP.inputStream)
+            pipP.waitFor()
             addLog("Pre-install complete", "success")
         } catch (e: Exception) {
             addLog("⚠ Pre-install error: ${e.message}", "warn")

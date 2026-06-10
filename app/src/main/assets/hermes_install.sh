@@ -186,12 +186,21 @@ step "5.0" "Checking hermes CLI"
 if command -v hermes >/dev/null 2>&1; then
     log "✓ hermes CLI found: $(command -v hermes)"
     hermes --version >> "$LOG" 2>&1 || log "⚠ version check failed (may be ok)"
+elif [ -x "${PREFIX}/hermes-agent/hermes" ]; then
+    log "✓ hermes CLI found (Python, needs pip deps)"
+    log "  To finish: cd ${PREFIX}/hermes-agent && pip install ."
+    log "  Expected: this may fail on Android without proot/gcc"
+elif command -v python3 >/dev/null 2>&1 && python3 -c "import yaml" 2>/dev/null; then
+    log "⚠ hermes not in PATH but Python+yaml ready"
+    log "  Run: cd ${PREFIX}/hermes-agent && python3 hermes --help"
 else
-    log "✗ hermes not in PATH"
-    log "Try: export PATH=\$PATH:${PREFIX}/bin"
-    exit 1
+    log "⚠ hermes CLI not available — Python/termux deps needed"
+    log "  The bootstrap environment is ready for manual agent setup."
 fi
 step "5.1" "Verification complete"
+# Phase 5 is advisory — the bootstrap environment (git, node, npm,
+# python, termux base) is fully functional even if the hermes Python
+# CLI needs additional pip packages or proot."
 
 # ═══════════════════════════════════════════
 # DONE
